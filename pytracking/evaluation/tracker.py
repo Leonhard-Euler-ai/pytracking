@@ -210,7 +210,7 @@ class Tracker:
 
             start_time = time.time()
 
-            info = seq.frame_info(frame_num)
+            info = seq.frame_info(frame_num)  # 不是序列的第一帧frame_inf为空
             info['previous_output'] = prev_output
 
             out = tracker.track(image, info)

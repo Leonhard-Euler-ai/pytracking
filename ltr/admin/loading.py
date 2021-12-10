@@ -71,7 +71,7 @@ def load_network(network_dir=None, checkpoint=None, constructor_fun_name=None, c
             checkpoint_path = checkpoint_list[0]
     elif isinstance(checkpoint, str):
         # Checkpoint is the path
-        checkpoint_path = os.path.expanduser(checkpoint)
+        checkpoint_path = os.path.expanduser(checkpoint)  # 能把路径中的～替换为当前用户的home目录
     else:
         raise TypeError
 
@@ -99,7 +99,7 @@ def load_network(network_dir=None, checkpoint=None, constructor_fun_name=None, c
     else:
         raise RuntimeError('No constructor for the given network.')
 
-    net.load_state_dict(checkpoint_dict['net'])
+    net.load_state_dict(checkpoint_dict['net'])  # 加载网络权重
 
     net.constructor = checkpoint_dict['constructor']
     if 'net_info' in checkpoint_dict and checkpoint_dict['net_info'] is not None:

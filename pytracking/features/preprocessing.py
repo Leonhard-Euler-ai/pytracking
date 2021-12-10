@@ -43,7 +43,7 @@ def sample_patch_multiscale(im, pos, scales, image_sz, mode: str='replicate', ma
     if isinstance(scales, (int, float)):
         scales = [scales]
 
-    # Get image patches
+    # Get image patches 输出结果理解：*后面的（）内为迭代器，元素为包含im_patch和coord的元组，*iterable解包，得到两个迭代器，每个迭代器中的元素分别是im_patch、coord,再通过zip打包成元组
     patch_iter, coord_iter = zip(*(sample_patch(im, pos, s*image_sz, image_sz, mode=mode,
                                                 max_scale_change=max_scale_change) for s in scales))
     im_patches = torch.cat(list(patch_iter))
@@ -87,23 +87,23 @@ def sample_patch(im: torch.Tensor, pos: torch.Tensor, sample_sz: torch.Tensor, o
 
     # Compute pre-downsampling factor
     if output_sz is not None:
-        resize_factor = torch.min(sample_sz.float() / output_sz.float()).item()
-        df = int(max(int(resize_factor - 0.1), 1))
+        resize_factor = torch.min(sample_sz.float() / output_sz.float()).item()  # 采样大小相对于输出大小的倍数
+        df = int(max(int(resize_factor - 0.1), 1))  # 取整，降采样因子
     else:
         df = int(1)
 
-    sz = sample_sz.float() / df     # new size
+    sz = sample_sz.float() / df     # new size 新的需要crop的样本大小
 
     # Do downsampling
-    if df > 1:
+    if df > 1:   # 对应的是采样大小比输出大小 大 时的情况  这种情况下需要降采样
         os = posl % df              # offset
-        posl = (posl - os) // df     # new position
+        posl = (posl - os) // df     # new position  将中心坐标缩小
         im2 = im[..., os[0].item()::df, os[1].item()::df]   # downsample
     else:
         im2 = im
 
     # compute size to crop
-    szl = torch.max(sz.round(), torch.Tensor([2])).long()
+    szl = torch.max(sz.round(), torch.Tensor([2])).long()  # 取整后新的需要采样大小为szl，中心为posl
 
     # Extract top and bottom coordinates
     tl = posl - (szl - 1) // 2
@@ -124,22 +124,23 @@ def sample_patch(im: torch.Tensor, pos: torch.Tensor, sample_sz: torch.Tensor, o
         # Get image patch
         # im_patch = im2[...,tl[0].item():br[0].item(),tl[1].item():br[1].item()]
 
-    # Get image patch
+    # Get image patch  对最后2维进行填充，将im填充到指定的大小的im_patche(用两个嵌套的矩形框理解下面的参数)
+    # pad的大小参数为list, 个数可以为2,4,6 分别代表左右上下前后的填充大小
     if not is_mask:
         im_patch = F.pad(im2, (-tl[1].item(), br[1].item() - im2.shape[3], -tl[0].item(), br[0].item() - im2.shape[2]), pad_mode)
     else:
         im_patch = F.pad(im2, (-tl[1].item(), br[1].item() - im2.shape[3], -tl[0].item(), br[0].item() - im2.shape[2]))
 
-    # Get image coordinates
+    # Get image coordinates  左上和右下坐标
     patch_coord = df * torch.cat((tl, br)).view(1,4)
 
     if output_sz is None or (im_patch.shape[-2] == output_sz[0] and im_patch.shape[-1] == output_sz[1]):
         return im_patch.clone(), patch_coord
 
-    # Resample
+    # Resample  将image patch插值成output_sz大小
     if not is_mask:
-        im_patch = F.interpolate(im_patch, output_sz.long().tolist(), mode='bilinear')
+        im_patch = F.interpolate(im_patch, output_sz.long().tolist(), mode='bilinear')  # 双线性插值
     else:
-        im_patch = F.interpolate(im_patch, output_sz.long().tolist(), mode='nearest')
+        im_patch = F.interpolate(im_patch, output_sz.long().tolist(), mode='nearest')   # 最邻近插值
 
     return im_patch, patch_coord

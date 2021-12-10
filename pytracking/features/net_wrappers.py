@@ -31,7 +31,7 @@ class NetWrapper:
         self.net = load_network(self.net_path, **self.net_kwargs)
         if self.use_gpu:
             self.cuda()
-        self.eval()
+        self.eval()  # 这里通过self.eval()调用__getattr__方法找到self.net.eval()  self.net是Dimpnet,父类nn.Module里有eval()方法，作用是进入eval模式，不改变BN和Dropout
 
     def initialize(self):
         self.load_network()
@@ -46,6 +46,7 @@ class NetWithBackbone(NetWrapper):
         super().__init__(net_path, use_gpu, initialize, **kwargs)
 
         self.image_format = image_format
+        # 下面的mean(均值)和std(方差)是Imagenet得出的规律，如果是特定数据集，可以自己计算
         self._mean = torch.Tensor(mean).view(1, -1, 1, 1)
         self._std = torch.Tensor(std).view(1, -1, 1, 1)
 

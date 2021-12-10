@@ -106,7 +106,7 @@ class DiMPSteepestDescentGN(nn.Module):
 
         # Get learnable scalars
         step_length_factor = torch.exp(self.log_step_length)
-        reg_weight = (self.filter_reg*self.filter_reg).clamp(min=self.min_filter_reg**2)
+        reg_weight = (self.filter_reg*self.filter_reg).clamp(min=self.min_filter_reg**2)  # 学习权重的正则化项
 
         # Compute distance map
         dmap_offset = (torch.Tensor(filter_sz).to(bb.device) % 2) / 2.0
@@ -114,49 +114,49 @@ class DiMPSteepestDescentGN(nn.Module):
         dist_map = self.distance_map(center, output_sz)
 
         # Compute label map masks and weight
-        label_map = self.label_map_predictor(dist_map).reshape(num_images, num_sequences, *dist_map.shape[-2:])
-        target_mask = self.target_mask_predictor(dist_map).reshape(num_images, num_sequences, *dist_map.shape[-2:])
-        spatial_weight = self.spatial_weight_predictor(dist_map).reshape(num_images, num_sequences, *dist_map.shape[-2:])
+        label_map = self.label_map_predictor(dist_map).reshape(num_images, num_sequences, *dist_map.shape[-2:])  # y_c
+        target_mask = self.target_mask_predictor(dist_map).reshape(num_images, num_sequences, *dist_map.shape[-2:])  # m_c  当越接近目标中心时 mc接近1  同时m_c是最后由sigmoid函数激活的，总大于零  当样本分数为负数的时候，使用mc将score激活，会消除小于0的s的影响，不会增大loss
+        spatial_weight = self.spatial_weight_predictor(dist_map).reshape(num_images, num_sequences, *dist_map.shape[-2:])  # v_c
 
         # Get total sample weights
         if sample_weight is None:
-            sample_weight = math.sqrt(1.0 / num_images) * spatial_weight
+            sample_weight = math.sqrt(1.0 / num_images) * spatial_weight  # v_c 空间权重
         elif isinstance(sample_weight, torch.Tensor):
             sample_weight = sample_weight.sqrt().reshape(num_images, num_sequences, 1, 1) * spatial_weight
 
-        backprop_through_learning = (self.detach_length > 0)
+        backprop_through_learning = (self.detach_length > 0)  # detach_length=inf 表示正无穷
 
-        weight_iterates = [weights]
-        losses = []
+        weight_iterates = [weights]   # 迭代的滤波器权重包括初始化的权重，接着是每次迭代后的权重 长度为1 + num_iter
+        losses = []  # 前面的是每次迭代过程中计算的loss,最后一项是将feat应用在final_weights得到的loss  长度为num_iter + 1
 
         for i in range(num_iter):
-            if not backprop_through_learning or (i > 0 and i % self.detach_length == 0):
+            if not backprop_through_learning or (i > 0 and i % self.detach_length == 0):  # 第一次迭代不反向传播 这里detach_length为无穷大，导致永假，一直不反向传播
                 weights = weights.detach()
 
             # Compute residuals
             scores = filter_layer.apply_filter(feat, weights)
             scores_act = self.score_activation(scores, target_mask)
             score_mask = self.score_activation_deriv(scores, target_mask)
-            residuals = sample_weight * (scores_act - label_map)
+            residuals = sample_weight * (scores_act - label_map)  # v_c * {(1-m_c)*s+max{0,s}*m_C - y_c}
 
             if compute_losses:
                 losses.append(((residuals**2).sum() + reg_weight * (weights**2).sum())/num_sequences)
 
-            # Compute gradient
-            residuals_mapped = score_mask * (sample_weight * residuals)
+            # Compute gradient  对照了论文公式也没看懂
+            residuals_mapped = score_mask * (sample_weight * residuals)  # q_c=v_c*m_c residuals_mapped=q_c*r(s,c)
             weights_grad = filter_layer.apply_feat_transpose(feat, residuals_mapped, filter_sz, training=self.training) + \
                           reg_weight * weights
 
             # Map the gradient with the Jacobian
-            scores_grad = filter_layer.apply_filter(feat, weights_grad)
-            scores_grad = sample_weight * (score_mask * scores_grad)
+            scores_grad = filter_layer.apply_filter(feat, weights_grad)  # ∂s/∂f
+            scores_grad = sample_weight * (score_mask * scores_grad)  # ∂r/∂f = q_c * ∂s/∂f
 
             # Compute optimal step length
             alpha_num = (weights_grad * weights_grad).sum(dim=(1,2,3))
-            alpha_den = ((scores_grad * scores_grad).reshape(num_images, num_sequences, -1).sum(dim=(0,2)) + (reg_weight + self.alpha_eps) * alpha_num).clamp(1e-8)
+            alpha_den = ((scores_grad * scores_grad).reshape(num_images, num_sequences, -1).sum(dim=(0,2)) + (reg_weight + self.alpha_eps) * alpha_num).clamp(1e-8)  # 对应h^2
             alpha = alpha_num / alpha_den
 
-            # Update filter
+            # Update filter  #这里为什么还要乘step_length_factor,这个值是初始步长，怎么会变成比例因子了
             weights = weights - (step_length_factor * alpha.reshape(-1, 1, 1, 1)) * weights_grad
 
             # Add the weight iterate

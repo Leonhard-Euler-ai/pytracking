@@ -27,27 +27,29 @@ class Transform:
                 pad_h = (self.output_sz[0] - imsz[0]) / 2
                 pad_w = (self.output_sz[1] - imsz[1]) / 2
 
+            # 取整：floor把数字变小，ceil把数字变大
+            # 计算四周填充的次数，使填充后的图片大小为output_sz  shift[0]是高度方向上的偏移，shift[1]是宽度方向上的偏移
             pad_left = math.floor(pad_w) + self.shift[1]
             pad_right = math.ceil(pad_w) - self.shift[1]
             pad_top = math.floor(pad_h) + self.shift[0]
             pad_bottom = math.ceil(pad_h) - self.shift[0]
-
+            # 得到output_sz大小的图像
             return F.pad(image, (pad_left, pad_right, pad_top, pad_bottom), 'replicate')
         else:
             raise NotImplementedError
 
 class Identity(Transform):
-    """Identity transformation."""
+    """Identity transformation. 恒等变换"""
     def __call__(self, image, is_mask=False):
         return self.crop_to_output(image)
 
 class FlipHorizontal(Transform):
-    """Flip along horizontal axis."""
+    """Flip along horizontal axis. 水平翻转"""
     def __call__(self, image, is_mask=False):
         if isinstance(image, torch.Tensor):
-            return self.crop_to_output(image.flip((3,)))
+            return self.crop_to_output(image.flip((3,)))  # image的维度是(batch,channels,h,w),水平翻转在第3维度上
         else:
-            return np.fliplr(image)
+            return np.fliplr(image)  # 传入的image是numpy处理的ndarray类型的，使用numpy翻转
 
 class FlipVertical(Transform):
     """Flip along vertical axis."""
@@ -58,9 +60,10 @@ class FlipVertical(Transform):
             return np.flipud(image)
 
 class Translation(Transform):
-    """Translate."""
+    """Translate. 平移"""
     def __init__(self, translation, output_sz = None, shift = None):
         super().__init__(output_sz, shift)
+        # 由于父类采用的是复制模式的填充，因此通过translation控制填充来实现平移  translation[0]表示上下平移量，translation[1]表示左右平移量，因为有输出大小的限制，并不是数值是几就平移几
         self.shift = (self.shift[0] + translation[0], self.shift[1] + translation[1])
 
     def __call__(self, image, is_mask=False):
@@ -70,24 +73,24 @@ class Translation(Transform):
             raise NotImplementedError
 
 class Scale(Transform):
-    """Scale."""
+    """Scale. 缩放"""
     def __init__(self, scale_factor, output_sz = None, shift = None):
         super().__init__(output_sz, shift)
         self.scale_factor = scale_factor
 
     def __call__(self, image, is_mask=False):
         if isinstance(image, torch.Tensor):
-            # Calculate new size. Ensure that it is even so that crop/pad becomes easier
+            # Calculate new size. Ensure that it is even so that crop/pad becomes easier  确保原图长宽是偶数
             h_orig, w_orig = image.shape[2:]
 
-            if h_orig != w_orig:
+            if h_orig != w_orig:  # 原图长宽不相等的缩放代码没实现
                 raise NotImplementedError
-
+            # 新的长宽保证也是偶数
             h_new = round(h_orig /self.scale_factor)
             h_new += (h_new - h_orig) % 2
             w_new = round(w_orig /self.scale_factor)
             w_new += (w_new - w_orig) % 2
-
+            # 先采用二次线性插值将原图插值到缩放后的大小
             image_resized = F.interpolate(image, [h_new, w_new], mode='bilinear')
 
             return self.crop_to_output(image_resized)
@@ -96,20 +99,20 @@ class Scale(Transform):
 
 
 class Affine(Transform):
-    """Affine transformation."""
+    """Affine transformation.仿射变换"""
     def __init__(self, transform_matrix, output_sz = None, shift = None):
         super().__init__(output_sz, shift)
         self.transform_matrix = transform_matrix
 
     def __call__(self, image, is_mask=False):
         if isinstance(image, torch.Tensor):
-            return self.crop_to_output(numpy_to_torch(self(torch_to_numpy(image))))
+            return self.crop_to_output(numpy_to_torch(self(torch_to_numpy(image))))  # 先将Tensor形式的image传入可调用对象self,会调用__call__()方法，得到numpy格式的转换结果，再转为torch，crop大小
         else:
             return cv.warpAffine(image, self.transform_matrix, image.shape[1::-1], borderMode=cv.BORDER_REPLICATE)
 
 
 class Rotate(Transform):
-    """Rotate with given angle."""
+    """Rotate with given angle. 给定一个角度的旋转，单位是度"""
     def __init__(self, angle, output_sz = None, shift = None):
         super().__init__(output_sz, shift)
         self.angle = math.pi * angle/180
@@ -118,9 +121,11 @@ class Rotate(Transform):
         if isinstance(image, torch.Tensor):
             return self.crop_to_output(numpy_to_torch(self(torch_to_numpy(image))))
         else:
+            # c代表中心点坐标
             c = (np.expand_dims(np.array(image.shape[:2]),1)-1)/2
             R = np.array([[math.cos(self.angle), math.sin(self.angle)],
                           [-math.sin(self.angle), math.cos(self.angle)]])
+            # H为旋转矩阵
             H =np.concatenate([R, c - R @ c], 1)
             return cv.warpAffine(image, H, image.shape[1::-1], borderMode=cv.BORDER_REPLICATE)
 
@@ -135,8 +140,8 @@ class Blur(Transform):
         self.filter_size = [math.ceil(2*s) for s in self.sigma]
         x_coord = [torch.arange(-sz, sz+1, dtype=torch.float32) for sz in self.filter_size]
         self.filter = [torch.exp(-(x**2)/(2*s**2)) for x, s in zip(x_coord, self.sigma)]
-        self.filter[0] = self.filter[0].view(1,1,-1,1) / self.filter[0].sum()
-        self.filter[1] = self.filter[1].view(1,1,1,-1) / self.filter[1].sum()
+        self.filter[0] = self.filter[0].view(1,1,-1,1) / self.filter[0].sum()   # 垂直方向上高斯滤波
+        self.filter[1] = self.filter[1].view(1,1,1,-1) / self.filter[1].sum()   # 水平方向上高斯滤波
 
     def __call__(self, image, is_mask=False):
         if isinstance(image, torch.Tensor):
@@ -148,7 +153,7 @@ class Blur(Transform):
 
 
 class RandomAffine(Transform):
-    """Affine transformation."""
+    """Affine transformation. 随机仿射变换（包括旋转，裁减，缩放等）"""
     def __init__(self, p_flip=0.0, max_rotation=0.0, max_shear=0.0, max_scale=0.0, max_ar_factor=0.0,
                  border_mode='constant', output_sz = None, shift = None):
         super().__init__(output_sz, shift)

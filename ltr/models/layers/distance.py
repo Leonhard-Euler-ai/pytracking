@@ -31,10 +31,10 @@ class DistanceMap(nn.Module):
         d1 = k1 - center[:,1].view(-1,1,1,1)
 
         dist = torch.sqrt(d0*d0 + d1*d1)
-        bin_diff = dist / self.bin_displacement - bin_centers
+        bin_diff = dist / self.bin_displacement - bin_centers  # dims(15,100,19,19)  不理解这行和下一行什么意思
 
         bin_val = torch.cat((F.relu(1.0 - torch.abs(bin_diff[:,:-1,:,:]), inplace=True),
-                             (1.0 + bin_diff[:,-1:,:,:]).clamp(0, 1)), dim=1)
+                             (1.0 + bin_diff[:,-1:,:,:]).clamp(0, 1)), dim=1)   # dims(15,100,19,19)
 
         return bin_val
 
